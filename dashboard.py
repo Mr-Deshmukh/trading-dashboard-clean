@@ -1549,22 +1549,51 @@ def delete_trade_form():
                             total_pnl_to_reverse = trade_history_for_this_trade['Profit/Loss'].sum()
                             
                             if total_pnl_to_reverse != 0:
-                                # Get linked accounts for this trade
+                                # Get ONLY the accounts that were linked to this trade (ignore any new accounts)
                                 linked_accounts = trade_data['Accounts'].split(',')
                                 
-                                # Calculate capital shares (same logic as trade exit)
-                                capital_shares = calculate_capital_share(st.session_state.accounts, linked_accounts)
+                                # Filter current accounts to only include those that were part of the original trade
+                                trade_accounts_only = st.session_state.accounts[
+                                    st.session_state.accounts['User ID'].isin(linked_accounts)
+                                ]
                                 
-                                # Reverse profit/loss from each account
-                                for account, share in capital_shares.items():
-                                    account_pnl_to_reverse = total_pnl_to_reverse * share
-                                    # Reverse the profit (subtract what was previously added)
-                                    update_account_profit(account, -account_pnl_to_reverse)
-                                    st.session_state.accounts.loc[
-                                        st.session_state.accounts['User ID'] == account, 'Profit (₹)'
-                                    ] -= account_pnl_to_reverse
-                                
-                                st.info(f"🔄 Reversed ₹{total_pnl_to_reverse:.2f} profit/loss from linked accounts")
+                                if not trade_accounts_only.empty:
+                                    # Calculate capital shares using ONLY the original trade accounts
+                                    # Capital amounts don't change during trading, so current capital = original capital
+                                    total_capital = trade_accounts_only['Capital (₹)'].sum()
+                                    capital_shares = {}
+                                    
+                                    if total_capital > 0:
+                                        for _, account_row in trade_accounts_only.iterrows():
+                                            account_id = account_row['User ID']
+                                            account_capital = account_row['Capital (₹)']
+                                            capital_shares[account_id] = account_capital / total_capital
+                                    else:
+                                        # Equal distribution if no capital
+                                        for account_id in linked_accounts:
+                                            if account_id in trade_accounts_only['User ID'].values:
+                                                capital_shares[account_id] = 1.0 / len(linked_accounts)
+                                    
+                                    # Reverse profit/loss using the original capital ratios
+                                    reversed_amounts = {}
+                                    for account_id, share in capital_shares.items():
+                                        account_pnl_to_reverse = total_pnl_to_reverse * share
+                                        reversed_amounts[account_id] = account_pnl_to_reverse
+                                        
+                                        # Reverse the profit (subtract what was previously added)
+                                        update_account_profit(account_id, -account_pnl_to_reverse)
+                                        st.session_state.accounts.loc[
+                                            st.session_state.accounts['User ID'] == account_id, 'Profit (₹)'
+                                        ] -= account_pnl_to_reverse
+                                    
+                                    # Show detailed reversal info
+                                    st.info(f"🔄 Reversed ₹{total_pnl_to_reverse:.2f} profit/loss from original trade accounts:")
+                                    for account_id, amount in reversed_amounts.items():
+                                        account_name = trade_accounts_only[trade_accounts_only['User ID']==account_id]['Name'].iloc[0]
+                                        share_pct = capital_shares[account_id] * 100
+                                        st.write(f"   • {account_name}: -₹{amount:.2f} ({share_pct:.1f}% share)")
+                                else:
+                                    st.warning("⚠️ Some original trade accounts no longer exist. Cannot reverse P&L accurately.")
                         
                         # Step 2: Delete from database
                         delete_trade_from_db(trade_id)
