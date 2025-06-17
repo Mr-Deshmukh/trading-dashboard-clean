@@ -347,13 +347,24 @@ def load_trade_history_from_db():
 def save_account_to_db(user_id, name, email, capital, profit=0):
     """Save account to database"""
     conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute('''
-        INSERT OR REPLACE INTO accounts (user_id, name, email, capital, profit)
-        VALUES (?, ?, ?, ?, ?)
-    ''', (user_id, name, email, capital, profit))
-    conn.commit()
-    conn.close()
+    try:
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT OR REPLACE INTO accounts (user_id, name, email, capital, profit)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (user_id, name, email, capital, profit))
+        conn.commit()
+        
+        # Verify the insert was successful
+        cursor.execute('SELECT COUNT(*) FROM accounts WHERE user_id = ?', (user_id,))
+        if cursor.fetchone()[0] == 0:
+            raise Exception(f"Failed to save account {user_id}")
+            
+    except Exception as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
 
 def update_account_capital(user_id, new_capital):
     """Update account capital in database"""
@@ -520,6 +531,34 @@ def initialize_session_state():
     if 'app_initialized' not in st.session_state:
         st.session_state.app_initialized = True
         # Don't show popup on every refresh, only on true first load
+
+def clear_all_database_data():
+    """Clear all data from all tables while preserving table structure"""
+    try:
+        if USE_POSTGRESQL:
+            engine = create_engine(DATABASE_URL)
+            with engine.connect() as conn:
+                # Clear all tables in correct order (to handle foreign key constraints)
+                conn.execute(text('DELETE FROM trade_history'))
+                conn.execute(text('DELETE FROM trades'))
+                conn.execute(text('DELETE FROM accounts'))
+                conn.commit()
+            return True, "PostgreSQL data cleared successfully"
+        else:
+            conn = sqlite3.connect(DB_FILE)
+            cursor = conn.cursor()
+            
+            # Clear all tables in correct order
+            cursor.execute('DELETE FROM trade_history')
+            cursor.execute('DELETE FROM trades') 
+            cursor.execute('DELETE FROM accounts')
+            
+            conn.commit()
+            conn.close()
+            return True, "SQLite data cleared successfully"
+            
+    except Exception as e:
+        return False, f"Error clearing data: {str(e)}"
 
 def test_database_functions():
     """Test all database functions to ensure they work properly"""
@@ -758,22 +797,21 @@ def add_accounts():
                 for error in errors:
                     st.error(f"❌ {error}")
             else:
-                # Add account to database and session state
-                save_account_to_db(user_id, name, email, round(initial_capital, 2), 0.00)
-                
-                new_account = pd.DataFrame({
-                    'User ID': [user_id],
-                    'Name': [name],
-                    'Email': [email],
-                    'Capital (₹)': [round(initial_capital, 2)],
-                    'Profit (₹)': [0.00]
-                })
-                
-                st.session_state.accounts = pd.concat([st.session_state.accounts, new_account], ignore_index=True)
-                st.success(f"✅ Account for {name} added successfully!")
-                st.toast(f"🎉 New account created: {name} with ₹{initial_capital:.2f} capital!", icon="🎉")
-                st.balloons()
-                st.rerun()
+                try:
+                    # Add account to database first
+                    save_account_to_db(user_id, name, email, round(initial_capital, 2), 0.00)
+                    
+                    # Refresh accounts from database to ensure consistency
+                    st.session_state.accounts = load_accounts_from_db()
+                    
+                    st.success(f"✅ Account for {name} added successfully!")
+                    st.toast(f"🎉 New account created: {name} with ₹{initial_capital:.2f} capital!", icon="🎉")
+                    st.balloons()
+                    st.rerun()
+                    
+                except Exception as e:
+                    st.error(f"❌ Failed to save account: {str(e)}")
+                    st.error("Please try again or check database permissions.")
 
 def edit_accounts():
     st.header("🛠️ Edit Accounts")
