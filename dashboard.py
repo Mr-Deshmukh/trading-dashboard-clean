@@ -220,10 +220,31 @@ def init_database():
         ''')
         
         conn.commit()
+        
+        # Verify tables were created
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        tables = cursor.fetchall()
+        table_names = [table[0] for table in tables]
+        
+        required_tables = ['accounts', 'trades', 'trade_history']
+        missing_tables = [table for table in required_tables if table not in table_names]
+        
+        if missing_tables:
+            raise Exception(f"Failed to create tables: {missing_tables}")
+        
         conn.close()
+        
+        # Show success message only once
+        if 'db_init_success' not in st.session_state:
+            st.toast("📊 Database initialized successfully!", icon="📊")
+            st.session_state.db_init_success = True
+        
         return True
+        
     except Exception as e:
-        st.error(f"Database initialization failed: {str(e)}")
+        st.error(f"❌ Database initialization failed: {str(e)}")
+        st.error(f"Database file path: {DB_FILE}")
+        st.error("Please check file permissions and disk space.")
         return False
 
 def load_accounts_from_db():
@@ -237,18 +258,29 @@ def load_accounts_from_db():
                 FROM accounts
             ''', engine)
             return df
-        except:
+        except Exception as e:
+            st.error(f"PostgreSQL load error: {str(e)}")
             return pd.DataFrame(columns=['User ID', 'Name', 'Email', 'Capital (₹)', 'Profit (₹)'])
     else:
         conn = sqlite3.connect(DB_FILE)
         try:
+            # Check if table exists first
+            cursor = conn.cursor()
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='accounts'")
+            if not cursor.fetchone():
+                st.warning("Accounts table not found. Initializing database...")
+                conn.close()
+                init_database()
+                conn = sqlite3.connect(DB_FILE)
+            
             df = pd.read_sql_query('''
                 SELECT user_id as "User ID", name as "Name", email as "Email", 
                        capital as "Capital (₹)", profit as "Profit (₹)"
                 FROM accounts
             ''', conn)
             return df
-        except:
+        except Exception as e:
+            st.error(f"SQLite load accounts error: {str(e)}")
             return pd.DataFrame(columns=['User ID', 'Name', 'Email', 'Capital (₹)', 'Profit (₹)'])
         finally:
             conn.close()
@@ -257,6 +289,14 @@ def load_trades_from_db():
     """Load trades from database"""
     conn = sqlite3.connect(DB_FILE)
     try:
+        # Check if table exists first
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='trades'")
+        if not cursor.fetchone():
+            conn.close()
+            init_database()
+            conn = sqlite3.connect(DB_FILE)
+        
         df = pd.read_sql_query('''
             SELECT trade_id as "Trade ID", symbol as "Symbol", qty as "Qty",
                    avg_price as "Avg Price", strategy as "Strategy",
@@ -265,7 +305,8 @@ def load_trades_from_db():
             FROM trades
         ''', conn)
         return df
-    except:
+    except Exception as e:
+        st.error(f"SQLite load trades error: {str(e)}")
         return pd.DataFrame(columns=[
             'Trade ID', 'Symbol', 'Qty', 'Avg Price', 'Strategy', 
             'Total Fees', 'Date', 'Accounts', 'Status', 'Positions'
@@ -277,6 +318,14 @@ def load_trade_history_from_db():
     """Load trade history from database"""
     conn = sqlite3.connect(DB_FILE)
     try:
+        # Check if table exists first
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='trade_history'")
+        if not cursor.fetchone():
+            conn.close()
+            init_database()
+            conn = sqlite3.connect(DB_FILE)
+        
         df = pd.read_sql_query('''
             SELECT trade_id as "Trade ID", symbol as "Symbol", 
                    entry_qty as "Entry Qty", entry_price as "Entry Price",
@@ -286,7 +335,8 @@ def load_trade_history_from_db():
             ORDER BY date DESC
         ''', conn)
         return df
-    except:
+    except Exception as e:
+        st.error(f"SQLite load trade history error: {str(e)}")
         return pd.DataFrame(columns=[
             'Trade ID', 'Symbol', 'Entry Qty', 'Entry Price', 'Exit Qty', 
             'Exit Price', 'Profit/Loss', 'Date', 'Accounts'
@@ -442,10 +492,19 @@ def delete_trade_history_from_db(trade_id):
 # Initialize session state
 def initialize_session_state():
     # Initialize database (PostgreSQL if available, otherwise SQLite)
-    if USE_POSTGRESQL:
-        init_postgresql_database()
-    else:
-        init_database()
+    try:
+        if USE_POSTGRESQL:
+            db_success = init_postgresql_database()
+        else:
+            db_success = init_database()
+        
+        if not db_success:
+            st.error("⚠️ Database initialization failed. Some features may not work properly.")
+            st.info("💡 Try refreshing the page or check the database connection.")
+    
+    except Exception as e:
+        st.error(f"❌ Critical error during database initialization: {str(e)}")
+        st.info("💡 Using empty data. Please restart the application.")
     
     # Load data from database
     if 'accounts' not in st.session_state:
@@ -461,6 +520,54 @@ def initialize_session_state():
     if 'app_initialized' not in st.session_state:
         st.session_state.app_initialized = True
         # Don't show popup on every refresh, only on true first load
+
+def test_database_functions():
+    """Test all database functions to ensure they work properly"""
+    test_results = []
+    
+    try:
+        # Test 1: Database initialization
+        if USE_POSTGRESQL:
+            result = init_postgresql_database()
+        else:
+            result = init_database()
+        test_results.append(("Database Initialization", "✅ Pass" if result else "❌ Fail"))
+        
+        # Test 2: Load functions
+        try:
+            accounts = load_accounts_from_db()
+            test_results.append(("Load Accounts", f"✅ Pass ({len(accounts)} records)"))
+        except Exception as e:
+            test_results.append(("Load Accounts", f"❌ Fail: {str(e)}"))
+        
+        try:
+            trades = load_trades_from_db()
+            test_results.append(("Load Trades", f"✅ Pass ({len(trades)} records)"))
+        except Exception as e:
+            test_results.append(("Load Trades", f"❌ Fail: {str(e)}"))
+        
+        try:
+            history = load_trade_history_from_db()
+            test_results.append(("Load Trade History", f"✅ Pass ({len(history)} records)"))
+        except Exception as e:
+            test_results.append(("Load Trade History", f"❌ Fail: {str(e)}"))
+        
+        # Test 3: Database file/connection
+        if not USE_POSTGRESQL:
+            try:
+                conn = sqlite3.connect(DB_FILE)
+                cursor = conn.cursor()
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                tables = cursor.fetchall()
+                conn.close()
+                test_results.append(("Database Connection", f"✅ Pass ({len(tables)} tables)"))
+            except Exception as e:
+                test_results.append(("Database Connection", f"❌ Fail: {str(e)}"))
+        
+    except Exception as e:
+        test_results.append(("Critical Error", f"❌ {str(e)}"))
+    
+    return test_results
 
 # Utility functions
 def generate_trade_id():
@@ -498,7 +605,7 @@ def main():
     st.sidebar.title("🔗 Navigation")
     page = st.sidebar.radio(
         "Choose a page:",
-        ["🏠 Home", "➕ Add Accounts", "🛠️ Edit Accounts", "📈 Add Trades", "📊 Analytics", "📚 Trade History"]
+        ["🏠 Home", "➕ Add Accounts", "🛠️ Edit Accounts", "📈 Add Trades", "📊 Analytics", "📚 Trade History", "🔧 Database Test"]
     )
     
     if page == "🏠 Home":
@@ -513,6 +620,8 @@ def main():
         analytics_dashboard()
     elif page == "📚 Trade History":
         trade_history_dashboard()
+    elif page == "🔧 Database Test":
+        database_test_page()
 
 def home_dashboard():
     st.header("🏠 Home Dashboard")
@@ -1473,6 +1582,122 @@ def trade_history_dashboard():
                     st.metric("Max Profit", f"₹{filtered_history['Profit/Loss'].max():.2f}")
                     st.metric("Max Loss", f"₹{filtered_history['Profit/Loss'].min():.2f}")
                     st.metric("Standard Deviation", f"₹{filtered_history['Profit/Loss'].std():.2f}")
+
+def database_test_page():
+    st.header("🔧 Database Test & Diagnostics")
+    
+    # Show database configuration
+    st.subheader("📋 Database Configuration")
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.info(f"**Database Type:** {'PostgreSQL' if USE_POSTGRESQL else 'SQLite'}")
+        if not USE_POSTGRESQL:
+            st.info(f"**Database File:** {DB_FILE}")
+        else:
+            st.info("**Database:** PostgreSQL (via DATABASE_URL)")
+    
+    with col2:
+        if not USE_POSTGRESQL and os.path.exists(DB_FILE):
+            file_size = os.path.getsize(DB_FILE)
+            st.info(f"**File Size:** {file_size:,} bytes")
+            st.info(f"**File Exists:** ✅ Yes")
+        elif not USE_POSTGRESQL:
+            st.warning("**File Exists:** ❌ No")
+        else:
+            st.info("**Connection:** External PostgreSQL")
+    
+    st.markdown("---")
+    
+    # Test all functions button
+    st.subheader("🧪 Function Tests")
+    
+    if st.button("🔍 Run All Database Tests", type="primary", use_container_width=True):
+        with st.spinner("Testing database functions..."):
+            results = test_database_functions()
+        
+        st.subheader("📊 Test Results")
+        
+        for test_name, result in results:
+            if "✅" in result:
+                st.success(f"**{test_name}:** {result}")
+            else:
+                st.error(f"**{test_name}:** {result}")
+    
+    st.markdown("---")
+    
+    # Manual database operations
+    st.subheader("🛠️ Manual Operations")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        if st.button("🔄 Reinitialize Database", use_container_width=True):
+            try:
+                if USE_POSTGRESQL:
+                    result = init_postgresql_database()
+                else:
+                    result = init_database()
+                
+                if result:
+                    st.success("✅ Database reinitialized successfully!")
+                else:
+                    st.error("❌ Database initialization failed")
+            except Exception as e:
+                st.error(f"❌ Error: {str(e)}")
+    
+    with col2:
+        if st.button("📊 Show Tables", use_container_width=True):
+            try:
+                if not USE_POSTGRESQL:
+                    conn = sqlite3.connect(DB_FILE)
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                    tables = cursor.fetchall()
+                    conn.close()
+                    
+                    if tables:
+                        st.success("**Database Tables:**")
+                        for table in tables:
+                            st.write(f"• {table[0]}")
+                    else:
+                        st.warning("No tables found")
+                else:
+                    st.info("PostgreSQL table listing not implemented")
+            except Exception as e:
+                st.error(f"❌ Error: {str(e)}")
+    
+    with col3:
+        if st.button("🧹 Clear Session State", use_container_width=True):
+            for key in ['accounts', 'trades', 'trade_history', 'db_init_success']:
+                if key in st.session_state:
+                    del st.session_state[key]
+            st.success("✅ Session state cleared!")
+            st.rerun()
+    
+    # Show current session state data
+    st.markdown("---")
+    st.subheader("💾 Current Data")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        if 'accounts' in st.session_state:
+            st.metric("Accounts", len(st.session_state.accounts))
+        else:
+            st.metric("Accounts", "Not loaded")
+    
+    with col2:
+        if 'trades' in st.session_state:
+            st.metric("Trades", len(st.session_state.trades))
+        else:
+            st.metric("Trades", "Not loaded")
+    
+    with col3:
+        if 'trade_history' in st.session_state:
+            st.metric("Trade History", len(st.session_state.trade_history))
+        else:
+            st.metric("Trade History", "Not loaded")
 
 if __name__ == "__main__":
     main()
