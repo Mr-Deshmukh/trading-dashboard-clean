@@ -517,9 +517,8 @@ def initialize_session_state():
         st.error(f"❌ Critical error during database initialization: {str(e)}")
         st.info("💡 Using empty data. Please restart the application.")
     
-    # Load data from database
-    if 'accounts' not in st.session_state:
-        st.session_state.accounts = load_accounts_from_db()
+    # Load data from database (force reload on every run to ensure consistency)
+    st.session_state.accounts = load_accounts_from_db()
     
     if 'trades' not in st.session_state:
         st.session_state.trades = load_trades_from_db()
@@ -800,9 +799,6 @@ def add_accounts():
                 try:
                     # Add account to database first
                     save_account_to_db(user_id, name, email, round(initial_capital, 2), 0.00)
-                    
-                    # Refresh accounts from database to ensure consistency
-                    st.session_state.accounts = load_accounts_from_db()
                     
                     st.success(f"✅ Account for {name} added successfully!")
                     st.toast(f"🎉 New account created: {name} with ₹{initial_capital:.2f} capital!", icon="🎉")
