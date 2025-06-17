@@ -346,78 +346,172 @@ def load_trade_history_from_db():
 
 def save_account_to_db(user_id, name, email, capital, profit=0):
     """Save account to database"""
-    conn = sqlite3.connect(DB_FILE)
-    try:
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT OR REPLACE INTO accounts (user_id, name, email, capital, profit)
-            VALUES (?, ?, ?, ?, ?)
-        ''', (user_id, name, email, capital, profit))
-        conn.commit()
-        
-        # Verify the insert was successful
-        cursor.execute('SELECT COUNT(*) FROM accounts WHERE user_id = ?', (user_id,))
-        if cursor.fetchone()[0] == 0:
-            raise Exception(f"Failed to save account {user_id}")
+    if USE_POSTGRESQL:
+        try:
+            engine = create_engine(DATABASE_URL)
+            with engine.connect() as conn:
+                # Try to update first, if no rows affected then insert
+                result = conn.execute(text('''
+                    UPDATE accounts SET 
+                        name = :name,
+                        email = :email,
+                        capital = :capital,
+                        profit = :profit
+                    WHERE user_id = :user_id
+                '''), {
+                    'user_id': user_id, 'name': name, 'email': email,
+                    'capital': capital, 'profit': profit
+                })
+                
+                # If no rows were updated, insert new record
+                if result.rowcount == 0:
+                    conn.execute(text('''
+                        INSERT INTO accounts (user_id, name, email, capital, profit)
+                        VALUES (:user_id, :name, :email, :capital, :profit)
+                    '''), {
+                        'user_id': user_id, 'name': name, 'email': email,
+                        'capital': capital, 'profit': profit
+                    })
+                
+                conn.commit()
+                
+                # Verify the operation was successful
+                result = conn.execute(text('SELECT COUNT(*) FROM accounts WHERE user_id = :user_id'), 
+                                    {'user_id': user_id})
+                if result.fetchone()[0] == 0:
+                    raise Exception(f"Failed to save account {user_id}")
+                    
+        except Exception as e:
+            raise e
+    else:
+        conn = sqlite3.connect(DB_FILE)
+        try:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT OR REPLACE INTO accounts (user_id, name, email, capital, profit)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (user_id, name, email, capital, profit))
+            conn.commit()
             
-    except Exception as e:
-        conn.rollback()
-        raise e
-    finally:
-        conn.close()
+            # Verify the insert was successful
+            cursor.execute('SELECT COUNT(*) FROM accounts WHERE user_id = ?', (user_id,))
+            if cursor.fetchone()[0] == 0:
+                raise Exception(f"Failed to save account {user_id}")
+                
+        except Exception as e:
+            conn.rollback()
+            raise e
+        finally:
+            conn.close()
 
 def update_account_capital(user_id, new_capital):
     """Update account capital in database"""
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute('UPDATE accounts SET capital = ? WHERE user_id = ?', (new_capital, user_id))
-    conn.commit()
-    conn.close()
+    if USE_POSTGRESQL:
+        try:
+            engine = create_engine(DATABASE_URL)
+            with engine.connect() as conn:
+                conn.execute(text('UPDATE accounts SET capital = :capital WHERE user_id = :user_id'), 
+                           {'capital': new_capital, 'user_id': user_id})
+                conn.commit()
+        except Exception as e:
+            raise e
+    else:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute('UPDATE accounts SET capital = ? WHERE user_id = ?', (new_capital, user_id))
+        conn.commit()
+        conn.close()
 
 def update_account_profit(user_id, profit_change):
     """Add profit to account in database"""
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute('UPDATE accounts SET profit = profit + ? WHERE user_id = ?', (profit_change, user_id))
-    conn.commit()
-    conn.close()
+    if USE_POSTGRESQL:
+        try:
+            engine = create_engine(DATABASE_URL)
+            with engine.connect() as conn:
+                conn.execute(text('UPDATE accounts SET profit = profit + :profit_change WHERE user_id = :user_id'), 
+                           {'profit_change': profit_change, 'user_id': user_id})
+                conn.commit()
+        except Exception as e:
+            raise e
+    else:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute('UPDATE accounts SET profit = profit + ? WHERE user_id = ?', (profit_change, user_id))
+        conn.commit()
+        conn.close()
 
 def delete_account_from_db(user_id):
     """Delete account from database with proper error handling"""
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    
-    try:
-        # Check if account exists
-        cursor.execute('SELECT COUNT(*) FROM accounts WHERE user_id = ?', (user_id,))
-        if cursor.fetchone()[0] == 0:
-            raise ValueError(f"Account {user_id} not found")
+    if USE_POSTGRESQL:
+        try:
+            engine = create_engine(DATABASE_URL)
+            with engine.connect() as conn:
+                # Check if account exists
+                result = conn.execute(text('SELECT COUNT(*) FROM accounts WHERE user_id = :user_id'), 
+                                    {'user_id': user_id})
+                if result.fetchone()[0] == 0:
+                    raise ValueError(f"Account {user_id} not found")
+                
+                # Check for related trades
+                result = conn.execute(text('SELECT COUNT(*) FROM trades WHERE accounts LIKE :pattern'), 
+                                    {'pattern': f'%{user_id}%'})
+                trade_count = result.fetchone()[0]
+                
+                # Check for related trade history
+                result = conn.execute(text('SELECT COUNT(*) FROM trade_history WHERE accounts LIKE :pattern'), 
+                                    {'pattern': f'%{user_id}%'})
+                history_count = result.fetchone()[0]
+                
+                if trade_count > 0 or history_count > 0:
+                    raise ValueError(f"Cannot delete account {user_id}: {trade_count} active trades and {history_count} history records exist. Please exit/delete trades first.")
+                
+                # Safe to delete
+                result = conn.execute(text('DELETE FROM accounts WHERE user_id = :user_id'), 
+                                    {'user_id': user_id})
+                
+                if result.rowcount == 0:
+                    raise ValueError(f"Failed to delete account {user_id}")
+                    
+                conn.commit()
+                return True
+                
+        except Exception as e:
+            raise e
+    else:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
         
-        # Check for related trades
-        cursor.execute('SELECT COUNT(*) FROM trades WHERE accounts LIKE ?', (f'%{user_id}%',))
-        trade_count = cursor.fetchone()[0]
-        
-        # Check for related trade history
-        cursor.execute('SELECT COUNT(*) FROM trade_history WHERE accounts LIKE ?', (f'%{user_id}%',))
-        history_count = cursor.fetchone()[0]
-        
-        if trade_count > 0 or history_count > 0:
-            raise ValueError(f"Cannot delete account {user_id}: {trade_count} active trades and {history_count} history records exist. Please exit/delete trades first.")
-        
-        # Safe to delete
-        cursor.execute('DELETE FROM accounts WHERE user_id = ?', (user_id,))
-        
-        if cursor.rowcount == 0:
-            raise ValueError(f"Failed to delete account {user_id}")
+        try:
+            # Check if account exists
+            cursor.execute('SELECT COUNT(*) FROM accounts WHERE user_id = ?', (user_id,))
+            if cursor.fetchone()[0] == 0:
+                raise ValueError(f"Account {user_id} not found")
             
-        conn.commit()
-        return True
-        
-    except Exception as e:
-        conn.rollback()
-        raise e
-    finally:
-        conn.close()
+            # Check for related trades
+            cursor.execute('SELECT COUNT(*) FROM trades WHERE accounts LIKE ?', (f'%{user_id}%',))
+            trade_count = cursor.fetchone()[0]
+            
+            # Check for related trade history
+            cursor.execute('SELECT COUNT(*) FROM trade_history WHERE accounts LIKE ?', (f'%{user_id}%',))
+            history_count = cursor.fetchone()[0]
+            
+            if trade_count > 0 or history_count > 0:
+                raise ValueError(f"Cannot delete account {user_id}: {trade_count} active trades and {history_count} history records exist. Please exit/delete trades first.")
+            
+            # Safe to delete
+            cursor.execute('DELETE FROM accounts WHERE user_id = ?', (user_id,))
+            
+            if cursor.rowcount == 0:
+                raise ValueError(f"Failed to delete account {user_id}")
+                
+            conn.commit()
+            return True
+            
+        except Exception as e:
+            conn.rollback()
+            raise e
+        finally:
+            conn.close()
 
 def save_trade_to_db(trade_data):
     """Save trade to database"""
