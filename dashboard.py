@@ -1373,12 +1373,23 @@ def delete_trade_form():
         
         st.markdown("---")
         
+        # Calculate total profit/loss to reverse from trade history
+        trade_history_for_this_trade = st.session_state.trade_history[
+            st.session_state.trade_history['Trade ID'] == trade_id
+        ]
+        total_pnl_to_reverse = 0.0
+        if not trade_history_for_this_trade.empty:
+            total_pnl_to_reverse = trade_history_for_this_trade['Profit/Loss'].sum()
+        
         # Warning message
         st.error("⚠️ **WARNING: This action cannot be undone!**")
         st.warning("Deleting a trade will:")
         st.write("• Remove the trade from the database permanently")
         st.write("• Remove all associated trade history entries")
-        st.write("• **NOT** reverse any profit/loss already distributed to accounts")
+        if total_pnl_to_reverse != 0:
+            st.write(f"• **REVERSE** ₹{total_pnl_to_reverse:.2f} profit/loss from linked accounts")
+        else:
+            st.write("• No profit/loss to reverse (trade never exited)")
         
         if trade_data['Status'] == 'Active':
             st.warning("• This is an **ACTIVE** trade - consider exiting it properly instead of deleting")
@@ -1396,11 +1407,38 @@ def delete_trade_form():
             if st.button("🗑️ Delete Trade", type="primary", use_container_width=True):
                 if confirm_text == f"DELETE {trade_id}":
                     try:
-                        # Delete from database
+                        # Step 1: Reverse profit/loss from accounts before deletion
+                        trade_history_for_this_trade = st.session_state.trade_history[
+                            st.session_state.trade_history['Trade ID'] == trade_id
+                        ]
+                        
+                        if not trade_history_for_this_trade.empty:
+                            # Calculate total P&L to reverse
+                            total_pnl_to_reverse = trade_history_for_this_trade['Profit/Loss'].sum()
+                            
+                            if total_pnl_to_reverse != 0:
+                                # Get linked accounts for this trade
+                                linked_accounts = trade_data['Accounts'].split(',')
+                                
+                                # Calculate capital shares (same logic as trade exit)
+                                capital_shares = calculate_capital_share(st.session_state.accounts, linked_accounts)
+                                
+                                # Reverse profit/loss from each account
+                                for account, share in capital_shares.items():
+                                    account_pnl_to_reverse = total_pnl_to_reverse * share
+                                    # Reverse the profit (subtract what was previously added)
+                                    update_account_profit(account, -account_pnl_to_reverse)
+                                    st.session_state.accounts.loc[
+                                        st.session_state.accounts['User ID'] == account, 'Profit (₹)'
+                                    ] -= account_pnl_to_reverse
+                                
+                                st.info(f"🔄 Reversed ₹{total_pnl_to_reverse:.2f} profit/loss from linked accounts")
+                        
+                        # Step 2: Delete from database
                         delete_trade_from_db(trade_id)
                         delete_trade_history_from_db(trade_id)
                         
-                        # Remove from session state
+                        # Step 3: Remove from session state
                         st.session_state.trades = st.session_state.trades[
                             st.session_state.trades['Trade ID'] != trade_id
                         ]
@@ -1410,8 +1448,8 @@ def delete_trade_form():
                             st.session_state.trade_history['Trade ID'] != trade_id
                         ]
                         
-                        st.success(f"✅ Trade {trade_id} deleted successfully!")
-                        st.toast(f"🗑️ Trade Deleted: {trade_data['Symbol']} ({trade_id})", icon="🗑️")
+                        st.success(f"✅ Trade {trade_id} deleted successfully with profit/loss reversal!")
+                        st.toast(f"🗑️ Trade Deleted: {trade_data['Symbol']} ({trade_id}) - P&L Reversed", icon="🗑️")
                         st.rerun()
                         
                     except Exception as e:
