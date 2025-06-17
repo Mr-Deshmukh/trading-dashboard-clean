@@ -287,62 +287,99 @@ def load_accounts_from_db():
 
 def load_trades_from_db():
     """Load trades from database"""
-    conn = sqlite3.connect(DB_FILE)
-    try:
-        # Check if table exists first
-        cursor = conn.cursor()
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='trades'")
-        if not cursor.fetchone():
+    if USE_POSTGRESQL:
+        try:
+            engine = create_engine(DATABASE_URL)
+            df = pd.read_sql_query('''
+                SELECT trade_id as "Trade ID", symbol as "Symbol", qty as "Qty",
+                       avg_price as "Avg Price", strategy as "Strategy",
+                       total_fees as "Total Fees", date as "Date",
+                       accounts as "Accounts", status as "Status", positions as "Positions"
+                FROM trades
+            ''', engine)
+            return df
+        except Exception as e:
+            st.error(f"PostgreSQL load trades error: {str(e)}")
+            return pd.DataFrame(columns=[
+                'Trade ID', 'Symbol', 'Qty', 'Avg Price', 'Strategy', 
+                'Total Fees', 'Date', 'Accounts', 'Status', 'Positions'
+            ])
+    else:
+        conn = sqlite3.connect(DB_FILE)
+        try:
+            # Check if table exists first
+            cursor = conn.cursor()
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='trades'")
+            if not cursor.fetchone():
+                conn.close()
+                init_database()
+                conn = sqlite3.connect(DB_FILE)
+            
+            df = pd.read_sql_query('''
+                SELECT trade_id as "Trade ID", symbol as "Symbol", qty as "Qty",
+                       avg_price as "Avg Price", strategy as "Strategy",
+                       total_fees as "Total Fees", date as "Date",
+                       accounts as "Accounts", status as "Status", positions as "Positions"
+                FROM trades
+            ''', conn)
+            return df
+        except Exception as e:
+            st.error(f"SQLite load trades error: {str(e)}")
+            return pd.DataFrame(columns=[
+                'Trade ID', 'Symbol', 'Qty', 'Avg Price', 'Strategy', 
+                'Total Fees', 'Date', 'Accounts', 'Status', 'Positions'
+            ])
+        finally:
             conn.close()
-            init_database()
-            conn = sqlite3.connect(DB_FILE)
-        
-        df = pd.read_sql_query('''
-            SELECT trade_id as "Trade ID", symbol as "Symbol", qty as "Qty",
-                   avg_price as "Avg Price", strategy as "Strategy",
-                   total_fees as "Total Fees", date as "Date",
-                   accounts as "Accounts", status as "Status", positions as "Positions"
-            FROM trades
-        ''', conn)
-        return df
-    except Exception as e:
-        st.error(f"SQLite load trades error: {str(e)}")
-        return pd.DataFrame(columns=[
-            'Trade ID', 'Symbol', 'Qty', 'Avg Price', 'Strategy', 
-            'Total Fees', 'Date', 'Accounts', 'Status', 'Positions'
-        ])
-    finally:
-        conn.close()
 
 def load_trade_history_from_db():
     """Load trade history from database"""
-    conn = sqlite3.connect(DB_FILE)
-    try:
-        # Check if table exists first
-        cursor = conn.cursor()
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='trade_history'")
-        if not cursor.fetchone():
+    if USE_POSTGRESQL:
+        try:
+            engine = create_engine(DATABASE_URL)
+            df = pd.read_sql_query('''
+                SELECT trade_id as "Trade ID", symbol as "Symbol", 
+                       entry_qty as "Entry Qty", entry_price as "Entry Price",
+                       exit_qty as "Exit Qty", exit_price as "Exit Price",
+                       profit_loss as "Profit/Loss", date as "Date", accounts as "Accounts"
+                FROM trade_history
+                ORDER BY date DESC
+            ''', engine)
+            return df
+        except Exception as e:
+            st.error(f"PostgreSQL load trade history error: {str(e)}")
+            return pd.DataFrame(columns=[
+                'Trade ID', 'Symbol', 'Entry Qty', 'Entry Price', 'Exit Qty', 
+                'Exit Price', 'Profit/Loss', 'Date', 'Accounts'
+            ])
+    else:
+        conn = sqlite3.connect(DB_FILE)
+        try:
+            # Check if table exists first
+            cursor = conn.cursor()
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='trade_history'")
+            if not cursor.fetchone():
+                conn.close()
+                init_database()
+                conn = sqlite3.connect(DB_FILE)
+            
+            df = pd.read_sql_query('''
+                SELECT trade_id as "Trade ID", symbol as "Symbol", 
+                       entry_qty as "Entry Qty", entry_price as "Entry Price",
+                       exit_qty as "Exit Qty", exit_price as "Exit Price",
+                       profit_loss as "Profit/Loss", date as "Date", accounts as "Accounts"
+                FROM trade_history
+                ORDER BY date DESC
+            ''', conn)
+            return df
+        except Exception as e:
+            st.error(f"SQLite load trade history error: {str(e)}")
+            return pd.DataFrame(columns=[
+                'Trade ID', 'Symbol', 'Entry Qty', 'Entry Price', 'Exit Qty', 
+                'Exit Price', 'Profit/Loss', 'Date', 'Accounts'
+            ])
+        finally:
             conn.close()
-            init_database()
-            conn = sqlite3.connect(DB_FILE)
-        
-        df = pd.read_sql_query('''
-            SELECT trade_id as "Trade ID", symbol as "Symbol", 
-                   entry_qty as "Entry Qty", entry_price as "Entry Price",
-                   exit_qty as "Exit Qty", exit_price as "Exit Price",
-                   profit_loss as "Profit/Loss", date as "Date", accounts as "Accounts"
-            FROM trade_history
-            ORDER BY date DESC
-        ''', conn)
-        return df
-    except Exception as e:
-        st.error(f"SQLite load trade history error: {str(e)}")
-        return pd.DataFrame(columns=[
-            'Trade ID', 'Symbol', 'Entry Qty', 'Entry Price', 'Exit Qty', 
-            'Exit Price', 'Profit/Loss', 'Date', 'Accounts'
-        ])
-    finally:
-        conn.close()
 
 def save_account_to_db(user_id, name, email, capital, profit=0):
     """Save account to database"""
@@ -525,51 +562,146 @@ def delete_account_from_db(user_id):
 
 def save_trade_to_db(trade_data):
     """Save trade to database"""
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute('''
-        INSERT OR REPLACE INTO trades 
-        (trade_id, symbol, qty, avg_price, strategy, total_fees, date, accounts, status, positions)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (
-        trade_data['Trade ID'], trade_data['Symbol'], trade_data['Qty'],
-        trade_data['Avg Price'], trade_data['Strategy'], trade_data['Total Fees'],
-        trade_data['Date'], trade_data['Accounts'], trade_data['Status'], trade_data['Positions']
-    ))
-    conn.commit()
-    conn.close()
+    # Convert numeric types to native Python types for database compatibility
+    qty = int(trade_data['Qty'])
+    avg_price = float(trade_data['Avg Price'])
+    total_fees = float(trade_data['Total Fees'])
+    
+    if USE_POSTGRESQL:
+        try:
+            engine = create_engine(DATABASE_URL)
+            with engine.connect() as conn:
+                # Try to update first, if no rows affected then insert
+                result = conn.execute(text('''
+                    UPDATE trades SET 
+                        symbol = :symbol,
+                        qty = :qty,
+                        avg_price = :avg_price,
+                        strategy = :strategy,
+                        total_fees = :total_fees,
+                        date = :date,
+                        accounts = :accounts,
+                        status = :status,
+                        positions = :positions
+                    WHERE trade_id = :trade_id
+                '''), {
+                    'trade_id': trade_data['Trade ID'], 'symbol': trade_data['Symbol'],
+                    'qty': qty, 'avg_price': avg_price, 'strategy': trade_data['Strategy'],
+                    'total_fees': total_fees, 'date': trade_data['Date'],
+                    'accounts': trade_data['Accounts'], 'status': trade_data['Status'],
+                    'positions': trade_data['Positions']
+                })
+                
+                # If no rows were updated, insert new record
+                if result.rowcount == 0:
+                    conn.execute(text('''
+                        INSERT INTO trades (trade_id, symbol, qty, avg_price, strategy, total_fees, date, accounts, status, positions)
+                        VALUES (:trade_id, :symbol, :qty, :avg_price, :strategy, :total_fees, :date, :accounts, :status, :positions)
+                    '''), {
+                        'trade_id': trade_data['Trade ID'], 'symbol': trade_data['Symbol'],
+                        'qty': qty, 'avg_price': avg_price, 'strategy': trade_data['Strategy'],
+                        'total_fees': total_fees, 'date': trade_data['Date'],
+                        'accounts': trade_data['Accounts'], 'status': trade_data['Status'],
+                        'positions': trade_data['Positions']
+                    })
+                
+                conn.commit()
+                
+        except Exception as e:
+            raise e
+    else:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT OR REPLACE INTO trades 
+            (trade_id, symbol, qty, avg_price, strategy, total_fees, date, accounts, status, positions)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            trade_data['Trade ID'], trade_data['Symbol'], qty,
+            avg_price, trade_data['Strategy'], total_fees,
+            trade_data['Date'], trade_data['Accounts'], trade_data['Status'], trade_data['Positions']
+        ))
+        conn.commit()
+        conn.close()
 
 def update_trade_in_db(trade_id, **kwargs):
     """Update trade in database"""
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    
-    for key, value in kwargs.items():
-        column_map = {
-            'Qty': 'qty', 'Avg Price': 'avg_price', 'Total Fees': 'total_fees',
-            'Status': 'status', 'Positions': 'positions'
-        }
-        column = column_map.get(key, key.lower())
-        cursor.execute(f'UPDATE trades SET {column} = ? WHERE trade_id = ?', (value, trade_id))
-    
-    conn.commit()
-    conn.close()
+    if USE_POSTGRESQL:
+        try:
+            engine = create_engine(DATABASE_URL)
+            with engine.connect() as conn:
+                for key, value in kwargs.items():
+                    column_map = {
+                        'Qty': 'qty', 'Avg Price': 'avg_price', 'Total Fees': 'total_fees',
+                        'Status': 'status', 'Positions': 'positions'
+                    }
+                    column = column_map.get(key, key.lower())
+                    # Convert numeric types to native Python types
+                    if isinstance(value, (np.integer, np.floating)):
+                        value = float(value) if isinstance(value, np.floating) else int(value)
+                    
+                    conn.execute(text(f'UPDATE trades SET {column} = :value WHERE trade_id = :trade_id'), 
+                               {'value': value, 'trade_id': trade_id})
+                conn.commit()
+        except Exception as e:
+            raise e
+    else:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        
+        for key, value in kwargs.items():
+            column_map = {
+                'Qty': 'qty', 'Avg Price': 'avg_price', 'Total Fees': 'total_fees',
+                'Status': 'status', 'Positions': 'positions'
+            }
+            column = column_map.get(key, key.lower())
+            cursor.execute(f'UPDATE trades SET {column} = ? WHERE trade_id = ?', (value, trade_id))
+        
+        conn.commit()
+        conn.close()
 
 def save_trade_history_to_db(history_data):
     """Save trade history to database"""
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute('''
-        INSERT INTO trade_history 
-        (trade_id, symbol, entry_qty, entry_price, exit_qty, exit_price, profit_loss, date, accounts)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (
-        history_data['Trade ID'], history_data['Symbol'], history_data['Entry Qty'],
-        history_data['Entry Price'], history_data['Exit Qty'], history_data['Exit Price'],
-        history_data['Profit/Loss'], history_data['Date'], history_data['Accounts']
-    ))
-    conn.commit()
-    conn.close()
+    # Convert numeric types to native Python types for database compatibility
+    entry_qty = int(history_data['Entry Qty'])
+    entry_price = float(history_data['Entry Price'])
+    exit_qty = int(history_data['Exit Qty'])
+    exit_price = float(history_data['Exit Price'])
+    profit_loss = float(history_data['Profit/Loss'])
+    
+    if USE_POSTGRESQL:
+        try:
+            engine = create_engine(DATABASE_URL)
+            with engine.connect() as conn:
+                conn.execute(text('''
+                    INSERT INTO trade_history 
+                    (trade_id, symbol, entry_qty, entry_price, exit_qty, exit_price, profit_loss, date, accounts)
+                    VALUES (:trade_id, :symbol, :entry_qty, :entry_price, :exit_qty, :exit_price, :profit_loss, :date, :accounts)
+                '''), {
+                    'trade_id': history_data['Trade ID'], 'symbol': history_data['Symbol'],
+                    'entry_qty': entry_qty, 'entry_price': entry_price,
+                    'exit_qty': exit_qty, 'exit_price': exit_price,
+                    'profit_loss': profit_loss, 'date': history_data['Date'],
+                    'accounts': history_data['Accounts']
+                })
+                conn.commit()
+                
+        except Exception as e:
+            raise e
+    else:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO trade_history 
+            (trade_id, symbol, entry_qty, entry_price, exit_qty, exit_price, profit_loss, date, accounts)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            history_data['Trade ID'], history_data['Symbol'], entry_qty,
+            entry_price, exit_qty, exit_price,
+            profit_loss, history_data['Date'], history_data['Accounts']
+        ))
+        conn.commit()
+        conn.close()
 
 def delete_trade_from_db(trade_id):
     """Delete trade from database with error handling"""
