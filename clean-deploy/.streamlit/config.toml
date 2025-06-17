@@ -1,0 +1,21 @@
+[global]
+# Show debug information
+developmentMode = false
+
+[server]
+# Server settings
+headless = true
+enableCORS = false
+enableXsrfProtection = false
+
+[browser]
+# Browser settings
+gatherUsageStats = false
+
+[theme]
+# App theme
+primaryColor = "#667eea"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f0f2f6"
+textColor = "#262730"
+font = "sans serif"
