@@ -322,12 +322,41 @@ def update_account_profit(user_id, profit_change):
     conn.close()
 
 def delete_account_from_db(user_id):
-    """Delete account from database"""
+    """Delete account from database with proper error handling"""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    cursor.execute('DELETE FROM accounts WHERE user_id = ?', (user_id,))
-    conn.commit()
-    conn.close()
+    
+    try:
+        # Check if account exists
+        cursor.execute('SELECT COUNT(*) FROM accounts WHERE user_id = ?', (user_id,))
+        if cursor.fetchone()[0] == 0:
+            raise ValueError(f"Account {user_id} not found")
+        
+        # Check for related trades
+        cursor.execute('SELECT COUNT(*) FROM trades WHERE accounts LIKE ?', (f'%{user_id}%',))
+        trade_count = cursor.fetchone()[0]
+        
+        # Check for related trade history
+        cursor.execute('SELECT COUNT(*) FROM trade_history WHERE accounts LIKE ?', (f'%{user_id}%',))
+        history_count = cursor.fetchone()[0]
+        
+        if trade_count > 0 or history_count > 0:
+            raise ValueError(f"Cannot delete account {user_id}: {trade_count} active trades and {history_count} history records exist. Please exit/delete trades first.")
+        
+        # Safe to delete
+        cursor.execute('DELETE FROM accounts WHERE user_id = ?', (user_id,))
+        
+        if cursor.rowcount == 0:
+            raise ValueError(f"Failed to delete account {user_id}")
+            
+        conn.commit()
+        return True
+        
+    except Exception as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
 
 def save_trade_to_db(trade_data):
     """Save trade to database"""
@@ -378,20 +407,37 @@ def save_trade_history_to_db(history_data):
     conn.close()
 
 def delete_trade_from_db(trade_id):
-    """Delete trade from database"""
+    """Delete trade from database with error handling"""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    cursor.execute('DELETE FROM trades WHERE trade_id = ?', (trade_id,))
-    conn.commit()
-    conn.close()
+    
+    try:
+        cursor.execute('DELETE FROM trades WHERE trade_id = ?', (trade_id,))
+        if cursor.rowcount == 0:
+            raise ValueError(f"Trade {trade_id} not found")
+        conn.commit()
+        return True
+    except Exception as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
 
 def delete_trade_history_from_db(trade_id):
-    """Delete trade history entries for a specific trade"""
+    """Delete trade history entries for a specific trade with error handling"""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    cursor.execute('DELETE FROM trade_history WHERE trade_id = ?', (trade_id,))
-    conn.commit()
-    conn.close()
+    
+    try:
+        cursor.execute('DELETE FROM trade_history WHERE trade_id = ?', (trade_id,))
+        # Note: rowcount can be 0 if no history exists, this is not an error
+        conn.commit()
+        return True
+    except Exception as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
 
 # Initialize session state
 def initialize_session_state():
@@ -702,14 +748,22 @@ def edit_accounts():
             confirm = st.checkbox("I confirm I want to delete this account")
             
             if st.button("Delete Account", type="primary") and confirm:
-                delete_account_from_db(selected_user_id)
-                
-                st.session_state.accounts = st.session_state.accounts[
-                    st.session_state.accounts['User ID'] != selected_user_id
-                ]
-                st.success(f"✅ Account for {account_data['Name']} deleted successfully!")
-                st.toast(f"🗑️ Account Deleted: {account_data['Name']} removed from system", icon="🗑️")
-                st.rerun()
+                try:
+                    delete_account_from_db(selected_user_id)
+                    
+                    st.session_state.accounts = st.session_state.accounts[
+                        st.session_state.accounts['User ID'] != selected_user_id
+                    ]
+                    st.success(f"✅ Account for {account_data['Name']} deleted successfully!")
+                    st.toast(f"🗑️ Account Deleted: {account_data['Name']} removed from system", icon="🗑️")
+                    st.rerun()
+                    
+                except ValueError as e:
+                    st.error(f"❌ Cannot delete account: {str(e)}")
+                    st.info("💡 **Tip**: Exit or delete all trades for this account first, then try again.")
+                except Exception as e:
+                    st.error(f"❌ Database error: {str(e)}")
+                    st.error("Please try again or contact support.")
 
 def add_trades():
     st.header("📈 Trade Management")
