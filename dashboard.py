@@ -346,6 +346,10 @@ def load_trade_history_from_db():
 
 def save_account_to_db(user_id, name, email, capital, profit=0):
     """Save account to database"""
+    # Convert NumPy types to native Python types for database compatibility
+    capital = float(capital)
+    profit = float(profit)
+    
     if USE_POSTGRESQL:
         try:
             engine = create_engine(DATABASE_URL)
@@ -406,6 +410,9 @@ def save_account_to_db(user_id, name, email, capital, profit=0):
 
 def update_account_capital(user_id, new_capital):
     """Update account capital in database"""
+    # Convert NumPy types to native Python types for database compatibility
+    new_capital = float(new_capital)
+    
     if USE_POSTGRESQL:
         try:
             engine = create_engine(DATABASE_URL)
@@ -424,6 +431,9 @@ def update_account_capital(user_id, new_capital):
 
 def update_account_profit(user_id, profit_change):
     """Add profit to account in database"""
+    # Convert NumPy types to native Python types for database compatibility
+    profit_change = float(profit_change)
+    
     if USE_POSTGRESQL:
         try:
             engine = create_engine(DATABASE_URL)
